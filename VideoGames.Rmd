@@ -1,0 +1,432 @@
+---
+title: "VideoGames"
+author: "Eduardo Guiliani"
+date: "6/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview
+
+The Video Games project is part of the HarvardX: PH125.9x Data Science: Capstone course. The aim of the project 
+is to develop and train recommendation machine learning algorithms to predict North American video game sales from 
+a set of video games spanning the years 1985 to 2016 in the data set. The Residual Mean Square Error (RMSE) will be used to evaluate the accuracy of the algorithms. This report will present methods used in exploratory data analysis and visualization, results for the RMSE model and a conclusion based on results of the model. The objective is to demonstrate knowledge acquired in the 9 courses of the professional certificate.
+
+The Video Games Sales data set was downloaded from [Kaggle](https://www.kaggle.com/rush4ratio/video-game-sales-with-ratings) in excel csv format. The code separated the data into two subsets for training (train_set) and testing (test_set). The algorithms used to train and test the model were Naive Bayes, Generalised Linear Model (GLM), K-nearest neighbor (Knn), Random Forest, and Classification Trees, The data set was loaded as a data frame, its dimensions and a sample of its features are provided below: 
+
+```{r Data, include=FALSE}
+
+#Libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+if(!require(Rborist)) install.packages("Rborist", repos = "http://cran.us.r-project.org")
+
+requiredPackages <- c("tidyverse","knitr","lubridate","caret","gridExtra","Rborist")
+lapply(requiredPackages, library, character.only = TRUE)
+
+
+#Create Video Games set
+
+videogames_data <- read.csv("https://raw.githubusercontent.com/eduardogdr/VideoGames/main/Video_Games_Sales_as_at_22_Dec_2016.csv")
+class(videogames_data)
+head(videogames_data)
+```
+
+# Methods
+
+## Data Set Video games
+
+```{r Data Dimensions, echo=FALSE}
+
+#Dimensions of dataset
+cat("The video games data set has", nrow(videogames_data), "rows and", ncol(videogames_data), "columns.")
+cat("There are", n_distinct(videogames_data$Name), "different video games and", n_distinct(videogames_data$Publisher), "different publishers in the video games data set.")
+cat("All sales are in millions of units sold.")
+```
+
+To prepare the data set for further analysis it's rows were evaluated in order to identify NA and Blank values in it's 16 columns. From the following table we can observe that Critic Score, Critic Count, and User Count have a considerable amount of NA values, and will reduce the data set significantly. 
+
+```{r Data Cleanse, echo=FALSE}
+
+colSums(is.na(videogames_data))
+
+videogames_data <- na.omit(videogames_data)
+cat("After removing NA's the video games data set now has", nrow(videogames_data), "rows.")
+```
+
+Upon further investigation we noticed that the "Year of release" column included some NA values that were not identified in the first removal and were subsequently removed. Rows with blank values in the "Developer" and "Ratings" column were also removed from the data set. 
+
+```{r Data Cleanse Blanks, echo=FALSE}
+
+videogames_data <- videogames_data %>% filter( Year_of_Release != "N/A")
+
+videogames_data$User_Score <- as.integer(videogames_data$User_Score)
+
+#Overview of columns with blanks
+
+colSums(videogames_data == '')
+
+videogames_data <-videogames_data %>% filter(Developer != '' & Rating != '')
+cat("After removing all NA's and blanks, the video games data set now has", nrow(videogames_data), "rows.")
+```
+
+The following summary presents a description of the data set in it's final form previous to exploratory data analysis : 
+
+```{r Data Summary, echo=FALSE}
+summary(videogames_data)
+```
+
+
+## Exploratory Data Analysis
+
+In our initial exploratory analysis we observe that North America is by far the most important market for the period observed (1985-2016), although there is some convergence in sales by the EU and North America in the latter years. The importance of the North American market to global sales will shape our approach in our further exploration of the data. 
+
+```{r Regional Sales, echo=FALSE}
+
+videogames_data %>% group_by(Year_of_Release) %>% 
+  summarise(NA_Sales_=sum(NA_Sales), EU_Sales_=sum(EU_Sales),
+            JP_Sales_=sum(JP_Sales), Other_Sales_=sum(Other_Sales)) %>%
+  ggplot() +
+  geom_line(aes(Year_of_Release, NA_Sales_, color = "NA", group=1))+
+  geom_line(aes(Year_of_Release, EU_Sales_, color = "EU",group=1)) +
+  geom_line(aes(Year_of_Release, JP_Sales_, color = "JP", group=1)) +
+  geom_line(aes(Year_of_Release, Other_Sales_, color = "Other", group=1)) +
+  labs(x = "Year of Release",
+       y = "Sum of Sales (in millions of units)",
+       color = "Legend") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_color_manual(values = c("NA" = "dark green", "EU" = "blue", 
+                                "JP" = "red", "Other" = "yellow"))+
+  ggtitle("Regional Sales per Year")
+
+```
+
+Subsequently, by aggregating North American sales by platforms we can observe that the X360 is the most used platform in the North American Market. However, by observing the x axis we notice that some of the platforms are in fact different versions of the consoles used to play video games. Thus, we aggregated platforms by platform groups to gain a better understanding of the popularity of the different consoles in the North American market. Sony is the clear leader in this respect, followed by Nintendo and then Microsoft. 
+
+```{r Platform Sales, echo=FALSE}
+
+videogames_data %>% group_by(Platform) %>% 
+  summarise(NA_Sales = sum(NA_Sales)) %>% ggplot(aes(Platform, NA_Sales)) +
+  geom_bar(stat="identity", fill="grey")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  ylab("North American Sales (million units)") +
+  ggtitle("North American Sales per Platform 1985-2016")
+
+```
+ 
+```{r Platform Groups, echo=FALSE}
+
+#Additional data wrangling to consolidate platforms
+
+Nintendo = c("3DS","DS","GB","GBA","N64","GC", "NES","SNES","Wii","WiiU")
+Sony = c("PS","PS2","PSP","PS3","PS4","PSV")
+Sega = c("GEN","SCD","DC","GG","SAT")
+Microsoft = c("XB","X360", "XOne")
+Other = c("2600","3DO","NG","PCFX","TG16","WS")
+PC= c('PC')
+
+videogames_data$Platform_Group[videogames_data$Platform %in% Nintendo] <- "Nintendo"
+videogames_data$Platform_Group[videogames_data$Platform %in% Sony] <- "Sony"
+videogames_data$Platform_Group[videogames_data$Platform %in% Microsoft] <- "Microsoft"
+videogames_data$Platform_Group[videogames_data$Platform %in% Sega] <- "Sega"
+videogames_data$Platform_Group[videogames_data$Platform %in% PC] <- "PC"
+videogames_data$Platform_Group[videogames_data$Platform %in% Other] <- "Other"
+
+```
+ 
+```{r Platform Group Sales, echo=FALSE}
+
+#Sony is the clear leader in Global Sales followed by Nintendo, and Microsoft
+
+videogames_data %>% group_by(Platform_Group) %>% 
+  summarise(NA_Sales = sum(NA_Sales)) %>% ggplot(aes(Platform_Group, NA_Sales)) +
+  geom_bar(stat="identity", fill="grey")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  ylab("North American Sales (million units)") +
+  ggtitle("North American Sales per Platform Group 1985-2016")
+
+```
+
+In the following tables we can observe that the developer with most sales is Nintendo. However, if we look at publisher sales we see that the largest video game publisher is Electronic Arts (EA). In terms of releases, EA is the most active video game publisher well ahead of Ubisoft.
+
+```{r Developer and Publisher Sales, echo=FALSE}
+
+videogames_data %>% group_by(Developer) %>%
+  summarise(NA_Sales = sum(NA_Sales)) %>% slice_max(NA_Sales, n=5)
+
+videogames_data %>% group_by(Publisher) %>%
+  summarise(NA_Sales = sum(NA_Sales)) %>% slice_max(NA_Sales, n=5)
+
+videogames_data %>% group_by(Publisher) %>%
+  summarise(Releases = n()) %>% slice_max(Releases, n=5)
+
+```
+
+In terms of the most popular game in North America, Wii Sports has a significant lead in this regard. 
+
+```{r Game Sales, echo=FALSE}
+
+videogames_data %>% group_by(Name) %>%
+  summarise(NA_Sales = sum(NA_Sales)) %>% slice_max(NA_Sales, n=5)
+
+```
+ 
+Furthermore, when grouping by genre we see that the action genre is the most important to North American sales. An action game is a video game genre that emphasizes physical challenges, including hand–eye coordination and reaction-time. For example, Enemy attacks and obstacles deplete the player character's health and lives, and the player receives a game over when they run out of lives.
+
+```{r Sales per genre, echo=FALSE}
+
+videogames_data %>% group_by(Genre) %>% 
+  summarise(NA_Sales = sum(NA_Sales)) %>% ggplot(aes(Genre, NA_Sales)) +
+  geom_bar(stat="identity", fill="steel blue")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  ylab("North American Sales (million units)") +
+  ggtitle("North American Sales per Genre 1985-2016")
+
+```
+ 
+ The data set also provides a critic score and user score as features that rate the quality of the game as rated by critics or users. The following graphs display the fact that higher critic and user scores translate to better North American sales, with a slight preference to critic score considering the steeper trend line of the two graphs. 
+ 
+```{r Critic and User Score, echo=FALSE, warning=FALSE, message=FALSE}
+
+NA_Sales_Critic_Score <-videogames_data %>% group_by(Critic_Score) %>%
+ggplot(aes(Critic_Score, NA_Sales))+
+geom_point()+
+scale_y_log10()+
+geom_smooth(method = "lm")+
+ggtitle("NA Sales per Critic Score") 
+
+NA_Sales_User_Score <-videogames_data %>% group_by(User_Score) %>%
+ggplot(aes(User_Score, NA_Sales))+
+geom_point()+
+scale_y_log10()+
+geom_smooth(method = "lm")+
+ggtitle("NA Sales per User Score")  
+
+grid.arrange(NA_Sales_Critic_Score,NA_Sales_User_Score)
+
+```
+
+Furthermore, by analyzing the amount of critic and user reviews across the time series we observe that they trend upwards peaking in 2009 and 2011 respectively, and then trend downwards. 
+
+```{r Critic and User Count per Year, echo=FALSE}
+
+Critic_Count_year <- videogames_data %>% group_by(Year_of_Release) %>% 
+  summarise(Critic_Count = sum(Critic_Count)) %>% ggplot(aes(Year_of_Release, Critic_Count)) +
+  geom_bar(stat="identity", fill="steel blue")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  ylab("User Count") +
+  ggtitle("Critic Count per Year")
+
+User_Count_year <- videogames_data %>% group_by(Year_of_Release) %>% 
+  summarise(User_Count = sum(User_Count)) %>% ggplot(aes(Year_of_Release, User_Count)) +
+  geom_bar(stat="identity", fill="grey")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  ylab("User Count") +
+  ggtitle("User Count per Year")
+
+grid.arrange(Critic_Count_year,User_Count_year)
+
+```
+
+In terms of North American sales we observe that the critics and user counts positively affect sales numbers. 
+
+```{r NA Sales per Critic and User Count, echo=FALSE,warning=FALSE, message= FALSE}
+
+NA_Sales_Critic_Count <- videogames_data %>% group_by(Critic_Count) %>%
+  ggplot(aes(Critic_Count, NA_Sales))+
+  geom_point()+
+  scale_y_log10()+
+  geom_smooth(method = "lm")+
+  ggtitle("NA Sales per Critic Count")  
+  
+  NA_Sales_User_Count <- videogames_data %>% group_by(User_Count) %>%
+    ggplot(aes(User_Count, NA_Sales))+
+    geom_point()+
+    scale_y_log10()+
+    scale_x_log10()+
+    geom_smooth(method = "lm")+
+    ggtitle("NA Sales per User Count")
+  
+  grid.arrange(NA_Sales_Critic_Count,NA_Sales_User_Count)
+  
+```
+ 
+## Model
+ 
+The data set was partitioned into train_set and test_set in order to train the model and then test the results. The split was .5 due to the fact that the data set was greatly reduced when removing NA and blank values. The seed was set to 527 in order to get the same results when running the algorithms. The features selected to train the model are critic score, critic count, user score, user count, platform, and genre. Platform and Genre are categorical features, thus the algorithms selected (GLM, KNN, random forest, and classification trees) are able to handle categorical data. 
+
+```{r Data Partition, include=FALSE,warning=FALSE, message= FALSE}
+
+set.seed(527)
+test_index <- createDataPartition(y = videogames_data$NA_Sales, times = 1, p = 0.5, list = FALSE)
+train_set <- videogames_data[-test_index,]
+test_set <- videogames_data[test_index,]
+
+```
+
+
+## The RMSE Model 
+
+The evaluation of the predictions were to be executed via an RMSE loss function, defined as:
+
+$\ RMSE = \sqrt{\frac{1}{N}\sum\limits_{u,i}\ (y_{u,i} - \hat{y}_{u,i})^2}$
+
+with $\hat{y}_{u,i}$ and $y_{u,i}$ being the predicted and actual ratings, and *N*, the number of possible combinations between user *u* and movie *i*.This function evaluates the square root of the mean of the differences between true and predicted ratings.
+
+## Algorithms 
+
+**Naive Bayes:** is an algorithm that uses Bayes' theorem to classify objects. Naive Bayes classifiers assume strong, or naive, independence between attributes of data points.
+
+**General Linear Model:**used to fit generalized linear models, specified by giving a symbolic description of the linear predictor and a description of the error distribution.
+
+**KNN:**is a non-parametric classification method used for classification and regression. In both cases, the input consists of the k closest training examples in data set.
+
+**Random Forest:**is an ensemble learning method for classification, regression and other tasks that operates by constructing a multitude of decision trees at training time. For classification tasks, the output of the random forest is the class selected by most trees. For regression tasks, the mean or average prediction of the individual trees is returned.
+
+**Classification Trees:**is an algorithm used to create a model that predicts the value of a target variable based on several input variables.
+
+## Results
+
+**Naive Bayes**
+
+```{r Naive Bayes Method, warning=FALSE}
+
+mu <- mean(train_set$NA_Sales)
+mu
+
+NB_Model <- RMSE(test_set$NA_Sales, mu)
+  
+```
+
+```{r Naive Bayes Results, echo=FALSE, warning=FALSE}
+
+cat("The resulting RMSE is", NB_Model)
+  
+```
+
+**Linear Regression Model**
+
+```{r LM Method, warning=FALSE}
+
+fit_GLM <- train(NA_Sales ~ Critic_Score + User_Score + Platform + Genre + Critic_Count + User_Count,
+       data=train_set,
+       method="lm")
+
+Results_2 <- predict(fit_GLM, test_set)
+
+GLM_Model <- RMSE(Results_2, test_set$NA_Sales)
+
+  
+```
+
+```{r LM Results, echo=FALSE, warning=FALSE}
+
+cat("The resulting RMSE is", GLM_Model)
+  
+```
+
+From the following graph we can observe that user and critic count are the most important features, followed by critic score and platform Wii.
+
+```{r LM Feature Importance, echo=FALSE}
+
+GLM_Feature_Importance <- varImp(fit_GLM, scale = FALSE)
+plot(GLM_Feature_Importance, main= "GLM")
+  
+```
+
+**KNN**
+
+```{r KNN Method, warning=FALSE}
+
+fit_knn <- knn3(NA_Sales ~ Critic_Score + User_Score + Platform + Genre + Critic_Count + User_Count, 
+                data=train_set, k=10)
+Results_3 <- predict(fit_knn, test_set)
+Knn_Model <- RMSE(Results_3, test_set$NA_Sales)
+
+```
+
+```{r KNN Results, echo=FALSE, warning=FALSE}
+
+cat("The resulting RMSE is", Knn_Model)
+  
+```
+
+_Note: the varImp function does not provide support for the knn algorithm on feature importance._
+
+**Random Forest**
+
+```{r RF Method, warning=FALSE}
+
+fit_rf <- train(NA_Sales ~ Critic_Score + User_Score + Platform + Genre + Critic_Count + User_Count, 
+                  data=train_set, method="Rborist", tuneGrid = data.frame(predFixed = 2, minNode = c(3, 50)),)
+ 
+ Results_4<- predict(fit_rf, test_set)
+ RF_Model<- RMSE(Results_4, test_set$NA_Sales)
+
+```
+
+```{r RF Results, echo=FALSE, warning=FALSE}
+
+cat("The resulting RMSE is", RF_Model)
+  
+```
+
+We can observe from the following graph that the most important features are user count and critic score, followed by critic count and platform Wii.
+
+```{r RF Feature Importance, echo=FALSE}
+
+ rf_Feature_Importance <- varImp(fit_rf, scale = FALSE)
+ plot(rf_Feature_Importance, main= "RF")
+ 
+```
+
+**Classification Trees**
+
+```{r RP Method, warning=FALSE}
+
+fit_rp <- train(NA_Sales ~ Critic_Score + User_Score + Platform + Genre + Critic_Count + User_Count, 
+                 data=train_set, method="rpart", tuneGrid = data.frame(cp = seq(0.0, 0.1, len = 25)),)
+ 
+ Results_5<- predict(fit_rp, test_set)
+ RP_Model<- RMSE(Results_5, test_set$NA_Sales)
+
+```
+
+```{r RP Results, echo=FALSE, warning=FALSE}
+
+cat("The resulting RMSE is", RP_Model)
+  
+```
+
+We can observe from the following graph that the most important features are user count and critic score, followed by critic score.
+
+```{r RP Feature Importance, echo=FALSE}
+
+ rp_Feature_Importance <- varImp(fit_rp, scale = FALSE)
+ plot(rp_Feature_Importance, main= "RP")
+ 
+```
+
+In summary, from the following table we can observe that the method that minimizes the RMSE is the Random Forest Model. However, the GLM algorithm was a close second. 
+
+```{r Results table, echo=FALSE}
+
+results <- data.frame(Model="Naive Mean-Baseline Model", RMSE=NB_Model)
+ results <- results %>% add_row(Model="GLM Model", RMSE=GLM_Model)
+ results <- results %>% add_row(Model="knn Model", RMSE=Knn_Model)
+ results <- results %>% add_row(Model="Random Forest Model", RMSE=RF_Model)
+ results <- results %>% add_row(Model="Classification Trees", RMSE=RP_Model)
+ 
+ results[order(results$RMSE),]
+ 
+```
+
+## Conclusion
+
+From the results presented we concluded that the Random Forest model was the algorithm, among the ones selected, that best performed. The data set selected for the project was greatly reduced after the data cleaning process, and despite this issue, the Random Forest model achieved an RMSE of less than 0.7. The most important features in general, were critic and user counts and scores. Herein lies the impact of the report, the ability to predict sales in your most important region by understanding the features that drive sales. It can be used in terms of the production of the video game itself, and how to market it to customers by making sure it receives a decent volume of user and critic scores. The model is limited by the size of data set, as previously mentioned. Future work could be centered around incorporating other regional sales figures into the model. 
